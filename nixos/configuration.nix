@@ -1,13 +1,34 @@
 { config, pkgs, lib, ... }:
 
 let
-  zfs = "${pkgs.zfs}/bin/zfs";
+  zfs = "${config.boot.zfs.package}/bin/zfs";
 
   zfsEnsure = dataset: attrs:
     let opts = lib.concatStringsSep " " (map (kv: "-o ${kv}") attrs);
     in "${zfs} list ${dataset} 2>/dev/null || ${zfs} create ${opts} ${dataset}";
 
   repoDir = "/home/audacioustux/tux.bd";
+
+  # Kernel 7.2 (owner, 2026-11-15: the newest kernel a ZFS release supports; TheGrid's
+  # io_uring floor is 7.0, D133). The root pool is on ZFS, and OpenZFS 2.4.4 supports Linux up
+  # to 7.2; no release supports 7.3 yet. nixos-unstable dropped 7.2 (end of life) on
+  # 2026-11-07, so the kernel comes from the last nixos-unstable before that (prebuilt in the
+  # binary cache). ZFS 2.4.4 is built here from this system's own nixpkgs (./zfs-2_4_4.nix),
+  # module against that kernel, so the initrd's ZFS tools link against the system's glibc
+  # (unstable's do not, and the initrd refuses them). Move to linuxPackages_latest once an
+  # OpenZFS release supports it, and never `zpool upgrade` while a 2.3 generation is still
+  # a boot fallback.
+  kernelSource = import (builtins.fetchTarball {
+    url = "https://github.com/NixOS/nixpkgs/archive/dae4eae944b1c16f5a002916bc8c95a639067ff8.tar.gz";
+    sha256 = "088l3by79b3q7a3gz3fx1zlpdyjv506727wjjw2gxpa0gshbvgzr";
+  }) { system = pkgs.stdenv.hostPlatform.system; };
+  zfs244 = pkgs.callPackage ./zfs-2_4_4.nix { configFile = "user"; };
+  kernelPackages = (pkgs.linuxPackagesFor kernelSource.linux_7_2).extend (self: _: {
+    # The module builds with the kernel's own stdenv (unstable's), as it must; 25.11's
+    # platform patterns do not match unstable's platform record, so name the system instead.
+    zfs_2_4 = (self.callPackage ./zfs-2_4_4.nix { configFile = "kernel"; inherit pkgs; inherit (self) kernel; })
+      .overrideAttrs (old: { meta = old.meta // { platforms = [ "x86_64-linux" ]; }; });
+  });
 in {
   imports = [
     ./hardware-configuration.nix
@@ -21,7 +42,8 @@ in {
   boot.loader.systemd-boot.enable             = true;
   boot.loader.systemd-boot.configurationLimit = 5;
   boot.loader.efi.canTouchEfiVariables        = true;
-  boot.kernelPackages                         = pkgs.linuxPackages_latest;
+  boot.kernelPackages                         = kernelPackages;
+  boot.zfs.package                            = zfs244;
 
   # ── Watchdog ────────────────────────────────────────────────────────────────
   # iTCO_wdt: systemd pets every 15 s; firmware hard-resets after 30 s stall.
@@ -35,7 +57,10 @@ in {
   boot.supportedFilesystems        = [ "zfs" ];
   boot.zfs.forceImportRoot         = false;
   boot.initrd.secrets              = { "/etc/zfs/safe.key" = "/etc/zfs/safe.key"; };
-  boot.kernelParams                = [ "zfs.zfs_arc_max=6442450944" ];  # ARC 6 GiB
+  # ARC 6 GiB. panic=10: a kernel panic reboots in 10 s instead of hanging, so a one-shot
+  # boot of a new kernel that fails falls back to the default entry by itself; boot.panic_on_fail
+  # turns a stage 1 failure (a pool that will not import) into that panic instead of a prompt.
+  boot.kernelParams                = [ "zfs.zfs_arc_max=6442450944" "panic=10" "boot.panic_on_fail" ];
   boot.extraModprobeConfig         = "options zfs zfs_txg_timeout=30";  # batch writes
   networking.hostId                = "8424e348";
   services.zfs.autoScrub           = { enable = true; interval = "weekly"; };
