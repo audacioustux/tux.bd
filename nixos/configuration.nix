@@ -239,7 +239,7 @@ in {
   environment.systemPackages = with pkgs; [
     git curl wget btop iotop
     sanoid rclone age openssl
-    docker-compose neovim cloudflared
+    docker-compose neovim cloudflared gh
   ];
 
   # ── Config repo auto-sync ───────────────────────────────────────────────────

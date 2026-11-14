@@ -2,6 +2,21 @@
 
 let
   cfg = config.tux.cloudflared;
+
+  # A local config, so the connector serves the right routes between process
+  # start and the first remote push. The dashboard stays authoritative — a
+  # remotely managed tunnel's remote config replaces this file's ingress
+  # (and an empty remote ingress is replaced with defaults that 503
+  # everything) — but without this file a restart is a 503 window.
+  # Keep it in sync with the dashboard by hand.
+  configFile = pkgs.writeText "cloudflared.yml" ''
+    ingress:
+      - hostname: box.tux.bd
+        service: ssh://localhost:22
+      - hostname: echo.tux.bd
+        service: http://localhost:8080
+      - service: http_status:404
+  '';
 in
 {
   options.tux.cloudflared = {
@@ -36,7 +51,8 @@ in
         Type = "simple";
         DynamicUser = true;
         LoadCredential = "tunnel-token:${cfg.tokenFile}";
-        ExecStart = "${lib.getExe pkgs.cloudflared} tunnel --no-autoupdate run --token-file %d/tunnel-token";
+        # --config is a global flag and must precede the `tunnel` subcommand.
+        ExecStart = "${lib.getExe pkgs.cloudflared} --no-autoupdate --config ${configFile} --metrics 127.0.0.1:20241 tunnel run --token-file %d/tunnel-token";
         Restart = "on-failure";
         RestartSec = 5;
 
