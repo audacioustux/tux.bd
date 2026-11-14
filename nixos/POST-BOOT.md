@@ -60,8 +60,13 @@ appears inside the service URL. The origin sees the path unmodified
 > `tux.bd` and `*.tux.bd` — one label deep. A hostname like
 > `echo.box.tux.bd` gets **no edge certificate** and the TLS handshake
 > fails outright (`ssl/tls alert handshake failure`), even though the
-> tunnel route itself is fine. Keep public hostnames one label deep, or
-> enable Total TLS in the dashboard so every hostname gets its own cert.
+> tunnel route itself is fine. Keep public hostnames one label deep.
+>
+> Total TLS does **not** help here: it is part of Advanced Certificate
+> Manager (a paid add-on on every plan), and Cloudflare explicitly
+> excludes Cloudflare Tunnel hostnames from its automatic issuance.
+> The only route to a deeper name is a manually ordered advanced
+> certificate (ACM, paid) covering `*.box.tux.bd`.
 
 ### 2a. Connector token (already done)
 
