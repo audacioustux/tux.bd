@@ -11,8 +11,11 @@ let
 in {
   imports = [
     ./hardware-configuration.nix
-    ./machine.local.nix  # gitignored — see machine.local.nix.example
-  ];
+    ./machine.local.nix       # gitignored — see machine.local.nix.example
+    ./cloudflared.nix
+    ./swarm.nix
+    ./github-runner.nix
+  ] ++ lib.optional (builtins.pathExists ./features.local.nix) ./features.local.nix;
 
   # ── Boot ────────────────────────────────────────────────────────────────────
   boot.loader.systemd-boot.enable             = true;
@@ -169,25 +172,24 @@ in {
   networking.networkmanager.enable = true;
 
   # ── Firewall ────────────────────────────────────────────────────────────────
-  # LAN (192.168.31.0/24) + tailscale0 trusted. Docker iptables=false —
-  # all container traffic routes through Traefik.
+  # LAN (192.168.31.0/24) only. Remote access goes out through the
+  # Cloudflare Tunnel (cloudflared connects outbound and proxies to
+  # localhost), so no inbound WAN ports are required.
   networking.firewall = {
     enable            = true;
-    trustedInterfaces = [ "tailscale0" ];
-    allowedTCPPorts   = [ 22 80 443 1080 3900 3901 ];
-    allowedUDPPorts   = [ 443 1080 41641 ];
+    allowedTCPPorts   = [ 22 1080 3900 3901 ];
+    allowedUDPPorts   = [ 1080 ];
     extraCommands = ''
-      iptables -I nixos-fw 1 -p tcp -m multiport --dports 22,80,443,1080,3900,3901 ! -s 192.168.31.0/24 -i wlo1 -j nixos-fw-refuse
-      iptables -I nixos-fw 1 -p udp -m multiport --dports 443,1080               ! -s 192.168.31.0/24 -i wlo1 -j nixos-fw-refuse
+      iptables -I nixos-fw 1 -p tcp -m multiport --dports 22,1080,3900,3901 ! -s 192.168.31.0/24 -i wlo1 -j nixos-fw-refuse
+      iptables -I nixos-fw 1 -p udp -m multiport --dports 1080               ! -s 192.168.31.0/24 -i wlo1 -j nixos-fw-refuse
     '';
     extraStopCommands = ''
-      iptables -D nixos-fw -p tcp -m multiport --dports 22,80,443,1080,3900,3901 ! -s 192.168.31.0/24 -i wlo1 -j nixos-fw-refuse 2>/dev/null || true
-      iptables -D nixos-fw -p udp -m multiport --dports 443,1080               ! -s 192.168.31.0/24 -i wlo1 -j nixos-fw-refuse 2>/dev/null || true
+      iptables -D nixos-fw -p tcp -m multiport --dports 22,1080,3900,3901 ! -s 192.168.31.0/24 -i wlo1 -j nixos-fw-refuse 2>/dev/null || true
+      iptables -D nixos-fw -p udp -m multiport --dports 1080               ! -s 192.168.31.0/24 -i wlo1 -j nixos-fw-refuse 2>/dev/null || true
     '';
   };
 
   # ── Services ────────────────────────────────────────────────────────────────
-  services.tailscale  = { enable = true; openFirewall = true; };
   services.fail2ban   = { enable = true; maxretry = 5; };
   services.avahi      = { enable = true; nssmdns4 = true; publish = { enable = true; addresses = true; }; };
 
@@ -206,34 +208,13 @@ in {
   };
 
   # ── Docker ──────────────────────────────────────────────────────────────────
+  # iptables=false keeps Docker from bypassing the NixOS firewall and still
+  # works for this single-node swarm (validated with k8swalski).
   virtualisation.docker = {
     enable                   = true;
     storageDriver            = "zfs";
     daemon.settings.iptables = false;
     autoPrune                = { enable = true; dates = "weekly"; flags = [ "--all" ]; };
-  };
-
-  # ── Infra compose stack (Traefik + Portainer) ───────────────────────────────
-  systemd.tmpfiles.rules = [
-    "d /persist/portainer     0700 root root -"
-    "d /persist/traefik       0700 root root -"
-    "d /persist/traefik/certs 0700 root root -"
-  ];
-
-  systemd.services.infra-compose = {
-    description = "Infra compose stack (Traefik + Portainer)";
-    wantedBy    = [ "multi-user.target" ];
-    after       = [ "docker.service" "network-online.target" "tailscaled.service" ];
-    wants       = [ "network-online.target" ];
-    requires    = [ "docker.service" ];
-    serviceConfig = {
-      Type             = "oneshot";
-      RemainAfterExit  = true;
-      WorkingDirectory = "/persist/compose/infra";
-      ExecStart        = "${pkgs.docker-compose}/bin/docker-compose up -d --pull missing --remove-orphans";
-      ExecStop         = "${pkgs.docker-compose}/bin/docker-compose down";
-      TimeoutStartSec  = "5min";
-    };
   };
 
   # ── Users ───────────────────────────────────────────────────────────────────
@@ -258,7 +239,7 @@ in {
   environment.systemPackages = with pkgs; [
     git curl wget btop iotop
     sanoid rclone age openssl
-    docker-compose neovim
+    docker-compose neovim cloudflared
   ];
 
   # ── Config repo auto-sync ───────────────────────────────────────────────────
@@ -274,7 +255,9 @@ in {
         runtimeInputs = [ pkgs.git ];
         text          = ''
           git add -A
-          git diff --cached --quiet || git commit -m "auto: sync $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          # Unsigned: the signing key for this repo lives on another machine
+          # and is not available here, so a signed auto-commit always failed.
+          git diff --cached --quiet || git -c commit.gpgsign=false commit -m "auto: sync $(date -u +%Y-%m-%dT%H:%M:%SZ)"
         '';
       } + "/bin/config-repo-commit";
     };

@@ -1,0 +1,16 @@
+# Copy this file to features.local.nix (gitignored).
+# It enables optional services that need machine-specific secrets or state.
+{ ... }:
+{
+  tux = {
+    # Cloudflare Tunnel. Requires /persist/cloudflared/token.
+    cloudflared.enable = true;
+
+    # Single-node Docker Swarm + k8swalski stack.
+    swarm.enable = true;
+
+    # GitHub Actions runner for the nobinalo org.
+    # Requires /persist/github-runner/token.
+    githubRunner.enable = true;
+  };
+}

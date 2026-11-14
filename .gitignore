@@ -12,5 +12,9 @@
 *.key
 *.json
 
-# Portainer / app databases
+# App databases
 *.db
+
+# Local secrets (passphrases, tokens, keys)
+secrets/
+*.passphrase

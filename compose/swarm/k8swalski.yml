@@ -1,0 +1,33 @@
+# k8swalski — HTTP/HTTPS echo server (ghcr.io/nobinalo/k8swalski)
+#
+# Deployed by nixos/swarm.nix via `docker stack deploy`.
+# Cloudflare Tunnel reaches it at http://127.0.0.1:8080; port 8080 is not
+# opened in the NixOS firewall, so the LAN cannot reach it directly.
+#
+# Notes:
+#   * `mode: host` publishes on the node itself (single-node swarm).
+#   * The image is FROM scratch and writes self-signed certs to /tmp,
+#     so /tmp must be a writable bind mount owned by UID 65532.
+#   * The image's built-in `--check-health` is broken (reqwest "builder
+#     error"), so there is deliberately no container healthcheck here.
+
+services:
+  k8swalski:
+    image: ghcr.io/nobinalo/k8swalski:latest
+    ports:
+      - target: 8080
+        published: 8080
+        protocol: tcp
+        mode: host
+    volumes:
+      - /persist/k8swalski/tmp:/tmp
+    environment:
+      HTTP_PORT: "8080"
+      HTTPS_PORT: "8443"
+      LOG_FORMAT: json
+      PROMETHEUS: "true"
+    deploy:
+      replicas: 1
+      endpoint_mode: dnsrr
+      restart_policy:
+        condition: on-failure
