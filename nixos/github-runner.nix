@@ -16,7 +16,7 @@ in
 
     name = lib.mkOption {
       type = lib.types.str;
-      default = "tux-devbox";
+      default = "tux-box";
       description = "Runner name shown in GitHub.";
     };
 

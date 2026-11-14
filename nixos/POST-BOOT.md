@@ -31,13 +31,13 @@ The pipeline:
 ## 2. Cloudflare Tunnel (remote access)
 
 Remote access no longer uses Tailscale. A `cloudflared` connector dials out
-to Cloudflare; Cloudflare then proxies `devbox.tux.bd` (SSH) and
+to Cloudflare; Cloudflare then proxies `box.tux.bd` (SSH) and
 `k8swalski.tux.bd` (HTTP) to localhost. No inbound WAN ports are opened.
 
 ### 2a. Create the tunnel
 
 1. Cloudflare dashboard → **Zero Trust → Networks → Tunnels → Create a tunnel**.
-2. Choose **Cloudflared**, name it e.g. `tux-devbox`, save.
+2. Choose **Cloudflared**, name it e.g. `tux-box`, save.
 3. Copy the connector token from the install command
    (`cloudflared tunnel run --token <TOKEN>`).
 
@@ -55,7 +55,7 @@ sudo systemctl status cloudflared
 
 | Subdomain     | Domain  | Service           |
 |---------------|---------|-------------------|
-| `devbox`      | `tux.bd`| `ssh://localhost:22` |
+| `box`         | `tux.bd`| `ssh://localhost:22` |
 | `k8swalski`   | `tux.bd`| `http://localhost:8080` |
 
 The dashboard creates the proxied CNAME records automatically.
@@ -74,11 +74,11 @@ Without Access, anyone who learns the hostname can reach the login prompt.
 Add this to the client's `~/.ssh/config` (the client needs `cloudflared`):
 
 ```
-Host devbox.tux.bd
+Host box.tux.bd
   ProxyCommand cloudflared access ssh --hostname %h
 ```
 
-Then `ssh devbox.tux.bd`. Key-only auth is already enforced on the host.
+Then `ssh box.tux.bd`. Key-only auth is already enforced on the host.
 
 ## 3. GitHub Actions runner (nobinalo org)
 
