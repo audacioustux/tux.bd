@@ -1,0 +1,30 @@
+# Ingress for this host's Cloudflare Tunnel (TUXBOX, b74e6a03-6f87-4be8-bce7-65b3127bab3e).
+#
+# The dashboard is authoritative, not this file. This tunnel is remotely
+# managed: cloudflared applies remote pushes even when `--config` names a local
+# file, and an empty remote ingress is replaced with defaults that 503
+# everything. Editing the rule below will not fix such an outage; edit the
+# dashboard's "Published application routes".
+#
+# The rules are still worth keeping: they are what the connector serves
+# between process start and the first remote push, so a restart is not a 503
+# window. Keep them in sync with the dashboard by hand.
+#
+# No tunnel UUID is pinned: the token identifies the tunnel. The hostnames
+# are pinned because this tunnel serves two different services — SSH and an
+# HTTP echo server — and an ingress rule binds one hostname to one service.
+# (A tunnel serving a single service can use one catch-all rule instead, as
+# TheGrid's devbox does for its sshd.)
+#
+# The origin port appears only here, inside the service URL. The client
+# always speaks HTTPS/443 to the edge.
+#
+# Hostname depth: the zone's Universal SSL certificate covers `tux.bd` and
+# `*.tux.bd` — one label deep. A deeper name such as `echo.box.tux.bd` gets
+# no edge certificate and the TLS handshake fails outright.
+ingress:
+  - hostname: box.tux.bd
+    service: ssh://localhost:22
+  - hostname: echo.tux.bd
+    service: http://localhost:8080
+  - service: http_status:404

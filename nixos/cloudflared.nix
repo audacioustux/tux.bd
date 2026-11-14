@@ -8,15 +8,8 @@ let
   # remotely managed tunnel's remote config replaces this file's ingress
   # (and an empty remote ingress is replaced with defaults that 503
   # everything) — but without this file a restart is a 503 window.
-  # Keep it in sync with the dashboard by hand.
-  configFile = pkgs.writeText "cloudflared.yml" ''
-    ingress:
-      - hostname: box.tux.bd
-        service: ssh://localhost:22
-      - hostname: echo.tux.bd
-        service: http://localhost:8080
-      - service: http_status:404
-  '';
+  # See the file for the reasoning; keep it in sync with the dashboard.
+  configFile = ./cloudflared.yml;
 in
 {
   options.tux.cloudflared = {
