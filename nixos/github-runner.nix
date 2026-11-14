@@ -3,6 +3,18 @@
 let
   cfg = config.tux.githubRunner;
   svc = "github-runner-nobinalo";
+
+  # The github-runner in the 25.11 channel is 2.331.0, which GitHub has
+  # deprecated ("Runner version v2.331.0 is deprecated and cannot receive
+  # messages") — it registers fine and then refuses jobs. Pin a current
+  # release (2.338.2) from one specific nixpkgs revision rather than
+  # upgrading the whole system just to move one package.
+  runnerPkgs = import (builtins.fetchTarball {
+    url = "https://github.com/NixOS/nixpkgs/archive/2074cc672349f14240fb7ea90d509e0b643e9dd4.tar.gz";
+    sha256 = "sha256-E0hYoioqUtM2XmPPvYYpJgdADF5AW9oOoPSEiM9dTHQ=";
+  }) { system = pkgs.stdenv.hostPlatform.system; };
+
+  runnerPackage = runnerPkgs.github-runner;
 in
 {
   options.tux.githubRunner = {
@@ -53,9 +65,14 @@ in
       name = cfg.name;
       tokenFile = cfg.tokenFile;
       replace = true;
+      package = runnerPackage;
 
       user = "github-runner";
       group = "github-runner";
+
+      # Node 20 is EOL and no longer shipped by current nixpkgs, so the
+      # pinned runner only supports node24.
+      nodeRuntimes = [ "node24" ];
 
       extraPackages = with pkgs; [
         bashInteractive
