@@ -44,17 +44,24 @@ into the origin). Keep it one-to-one:
 | Hostname            | Service                    | DNS                               |
 |---------------------|----------------------------|-----------------------------------|
 | `box.tux.bd`        | `ssh://localhost:22`       | CNAME → `b74e6a03-….cfargotunnel.com` (proxied) |
-| `k8swalski.tux.bd`  | `http://localhost:8080`    | same (proxied)                    |
+| `echo.tux.bd`       | `http://localhost:8080`    | same (proxied)                    |
 | any                 | `http_status:404` (catch-all) |                              |
 
 ```
-ssh box.tux.bd                      # SSH (host key auth only)
-curl https://k8swalski.tux.bd/livez # k8swalski over TLS at the edge
+ssh box.tux.bd                   # SSH (host key auth only)
+curl https://echo.tux.bd/livez  # k8swalski echo server over TLS at the edge
 ```
 
 The client always talks HTTPS/443 to the edge; the origin port only ever
 appears inside the service URL. The origin sees the path unmodified
 (`/livez`, `/readyz`, …).
+
+> **Hostname depth matters.** The zone's Universal SSL certificate covers
+> `tux.bd` and `*.tux.bd` — one label deep. A hostname like
+> `echo.box.tux.bd` gets **no edge certificate** and the TLS handshake
+> fails outright (`ssl/tls alert handshake failure`), even though the
+> tunnel route itself is fine. Keep public hostnames one label deep, or
+> enable Total TLS in the dashboard so every hostname gets its own cert.
 
 ### 2a. Connector token (already done)
 
@@ -85,12 +92,12 @@ TN=b74e6a03-6f87-4be8-bce7-65b3127bab3e
 curl -X PUT -H "Authorization: Bearer $T" -H "Content-Type: application/json" \
   -d '{"config":{"ingress":[
         {"hostname":"box.tux.bd","service":"ssh://localhost:22","originRequest":{}},
-        {"hostname":"k8swalski.tux.bd","service":"http://localhost:8080","originRequest":{}},
+        {"hostname":"echo.tux.bd","service":"http://localhost:8080","originRequest":{}},
         {"service":"http_status:404"}]}}' \
   "https://api.cloudflare.com/client/v4/accounts/$A/cfd_tunnel/$TN/configurations"
 
 # DNS
-for n in box k8swalski; do
+for n in box echo; do
   curl -X POST -H "Authorization: Bearer $T" -H "Content-Type: application/json" \
     -d "{\"type\":\"CNAME\",\"name\":\"$n.tux.bd\",\"content\":\"$TN.cfargotunnel.com\",\"proxied\":true}" \
     "https://api.cloudflare.com/client/v4/zones/$Z/dns_records"
