@@ -109,6 +109,12 @@ for n in box echo; do
 done
 ```
 
+The same rules are kept in `nixos/cloudflared.yml`, which the connector is
+started with (`--config`). The dashboard stays authoritative for a remotely
+managed tunnel, but the local file is what the connector serves between
+process start and the first remote push — without it, a restart is a 503
+window. Change both together.
+
 > The old `proxy.tux.bd` and `admin.tux.bd` A records (pointing at the
 > retired Tailscale IP `100.81.170.88`) were deleted.
 
