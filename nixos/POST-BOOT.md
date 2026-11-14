@@ -37,26 +37,24 @@ to Cloudflare; Cloudflare then proxies `box.tux.bd` (SSH) and
 Tunnel: **TUXBOX** `b74e6a03-6f87-4be8-bce7-65b3127bab3e`
 (account `a199fa7663f456591646e01be612f2b6`, zone `tux.bd`).
 
-One hostname carries both services. The ingress uses a path rule, so the
-first matching rule wins:
+One hostname per service — the edge maps a hostname to exactly one service,
+so a hostname carrying both would need path rules (which leak the prefix
+into the origin). Keep it one-to-one:
 
-| Hostname     | Path            | Service               |
-|--------------|-----------------|-----------------------|
-| `box.tux.bd` | `/k8swalski(/.*)?` | `http://localhost:8080` |
-| `box.tux.bd` | (everything else)  | `ssh://localhost:22`   |
-| any          | (catch-all)     | `http_status:404`     |
-
-DNS: one proxied CNAME — `box.tux.bd` → `b74e6a03-….cfargotunnel.com`.
+| Hostname            | Service                    | DNS                               |
+|---------------------|----------------------------|-----------------------------------|
+| `box.tux.bd`        | `ssh://localhost:22`       | CNAME → `b74e6a03-….cfargotunnel.com` (proxied) |
+| `k8swalski.tux.bd`  | `http://localhost:8080`    | same (proxied)                    |
+| any                 | `http_status:404` (catch-all) |                              |
 
 ```
-ssh box.tux.bd                     # SSH (host key auth only)
-curl https://box.tux.bd/k8swalski/livez   # k8swalski over TLS at the edge
+ssh box.tux.bd                      # SSH (host key auth only)
+curl https://k8swalski.tux.bd/livez # k8swalski over TLS at the edge
 ```
 
-> The path prefix is **not** stripped by cloudflared, so the origin sees
-> `/k8swalski/livez`. That is fine for the echo server (it answers 200 on
-> every path) but it means the bare `/livez` and `/readyz` paths now live
-> under the prefix.
+The client always talks HTTPS/443 to the edge; the origin port only ever
+appears inside the service URL. The origin sees the path unmodified
+(`/livez`, `/readyz`, …).
 
 ### 2a. Connector token (already done)
 
@@ -86,20 +84,21 @@ TN=b74e6a03-6f87-4be8-bce7-65b3127bab3e
 # ingress rules (the connector picks this up live, no restart needed)
 curl -X PUT -H "Authorization: Bearer $T" -H "Content-Type: application/json" \
   -d '{"config":{"ingress":[
-        {"hostname":"box.tux.bd","path":"/k8swalski(/.*)?","service":"http://localhost:8080","originRequest":{}},
         {"hostname":"box.tux.bd","service":"ssh://localhost:22","originRequest":{}},
+        {"hostname":"k8swalski.tux.bd","service":"http://localhost:8080","originRequest":{}},
         {"service":"http_status:404"}]}}' \
   "https://api.cloudflare.com/client/v4/accounts/$A/cfd_tunnel/$TN/configurations"
 
 # DNS
-curl -X POST -H "Authorization: Bearer $T" -H "Content-Type: application/json" \
-  -d "{\"type\":\"CNAME\",\"name\":\"box.tux.bd\",\"content\":\"$TN.cfargotunnel.com\",\"proxied\":true}" \
-  "https://api.cloudflare.com/client/v4/zones/$Z/dns_records"
+for n in box k8swalski; do
+  curl -X POST -H "Authorization: Bearer $T" -H "Content-Type: application/json" \
+    -d "{\"type\":\"CNAME\",\"name\":\"$n.tux.bd\",\"content\":\"$TN.cfargotunnel.com\",\"proxied\":true}" \
+    "https://api.cloudflare.com/client/v4/zones/$Z/dns_records"
+done
 ```
 
 > The old `proxy.tux.bd` and `admin.tux.bd` A records (pointing at the
-> retired Tailscale IP `100.81.170.88`) were deleted, as was the separate
-> `k8swalski.tux.bd` CNAME.
+> retired Tailscale IP `100.81.170.88`) were deleted.
 
 `warp-routing` (letting WARP clients route the LAN through this tunnel) is
 **off** — the API refuses to flip it on an existing tunnel; enable it in the
