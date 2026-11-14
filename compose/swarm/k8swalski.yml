@@ -19,6 +19,11 @@ services:
         published: 8080
         protocol: tcp
         mode: host
+      # HTTPS (self-signed cert written to the /tmp bind mount).
+      - target: 8443
+        published: 8443
+        protocol: tcp
+        mode: host
     volumes:
       - /persist/k8swalski/tmp:/tmp
     environment:
