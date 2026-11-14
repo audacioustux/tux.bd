@@ -34,40 +34,70 @@ Remote access no longer uses Tailscale. A `cloudflared` connector dials out
 to Cloudflare; Cloudflare then proxies `box.tux.bd` (SSH) and
 `k8swalski.tux.bd` (HTTP) to localhost. No inbound WAN ports are opened.
 
-### 2a. Create the tunnel
+Tunnel: **TUXBOX** `b74e6a03-6f87-4be8-bce7-65b3127bab3e`
+(account `a199fa7663f456591646e01be612f2b6`, zone `tux.bd`).
 
-1. Cloudflare dashboard → **Zero Trust → Networks → Tunnels → Create a tunnel**.
-2. Choose **Cloudflared**, name it e.g. `tux-box`, save.
-3. Copy the connector token from the install command
-   (`cloudflared tunnel run --token <TOKEN>`).
+| Subdomain   | Domain   | Service             | DNS                        |
+|-------------|----------|---------------------|----------------------------|
+| `box`       | `tux.bd` | `ssh://localhost:22`| CNAME → `b74e6a03-….cfargotunnel.com` (proxied) |
+| `k8swalski` | `tux.bd` | `http://localhost:8080` | same (proxied)          |
 
-Install the token on the host (the service is already enabled but gated on
-this file):
+### 2a. Connector token (already done)
+
+The connector token lives at `/persist/cloudflared/token` (root-only). The
+service is gated on it with `ConditionPathExists`, so it simply stays
+inactive until the token is there.
 
 ```bash
-sudo install -m 600 /dev/stdin /persist/cloudflared/token
-# paste the token, press Enter, then Ctrl-D
+printf '%s' '<TUNNEL_TOKEN>' | sudo install -m 600 /dev/stdin /persist/cloudflared/token
 sudo systemctl start cloudflared
 sudo systemctl status cloudflared
+curl -s http://127.0.0.1:20241/ready   # {"status":200,"readyConnections":N}
 ```
 
-### 2b. Add public hostnames (dashboard → your tunnel → Public Hostname)
+### 2b. Managing the tunnel with the API (reproducible)
 
-| Subdomain     | Domain  | Service           |
-|---------------|---------|-------------------|
-| `box`         | `tux.bd`| `ssh://localhost:22` |
-| `k8swalski`   | `tux.bd`| `http://localhost:8080` |
+A Cloudflare API token with *Tunnel / DNS / Access* permissions is stored
+root-only at `/persist/cloudflare/api-token`. The tunnel ingress and DNS are
+managed from it, so they can be re-applied without the dashboard:
 
-The dashboard creates the proxied CNAME records automatically.
+```bash
+T=$(sudo cat /persist/cloudflare/api-token)
+A=a199fa7663f456591646e01be612f2b6
+Z=09ee29afcdbaa36aeac7d2203d5fd33e
+TN=b74e6a03-6f87-4be8-bce7-65b3127bab3e
 
-> Delete the old `proxy.tux.bd` and `admin.tux.bd` DNS records — they point
-> at the retired Tailscale IP `100.81.170.88`.
+# ingress rules (the connector picks this up live, no restart needed)
+curl -X PUT -H "Authorization: Bearer $T" -H "Content-Type: application/json" \
+  -d '{"config":{"ingress":[
+        {"hostname":"box.tux.bd","service":"ssh://localhost:22","originRequest":{}},
+        {"hostname":"k8swalski.tux.bd","service":"http://localhost:8080","originRequest":{}},
+        {"service":"http_status:404"}]}}' \
+  "https://api.cloudflare.com/client/v4/accounts/$A/cfd_tunnel/$TN/configurations"
 
-### 2c. Protect it with Cloudflare Access
+# DNS
+for n in box k8swalski; do
+  curl -X POST -H "Authorization: Bearer $T" -H "Content-Type: application/json" \
+    -d "{\"type\":\"CNAME\",\"name\":\"$n.tux.bd\",\"content\":\"$TN.cfargotunnel.com\",\"proxied\":true}" \
+    "https://api.cloudflare.com/client/v4/zones/$Z/dns_records"
+done
+```
 
-Zero Trust → **Access → Applications**. Create one application per hostname
-(or a wildcard `*.tux.bd` policy) with an allow rule for your email/IdP.
-Without Access, anyone who learns the hostname can reach the login prompt.
+> The old `proxy.tux.bd` and `admin.tux.bd` A records (pointing at the
+> retired Tailscale IP `100.81.170.88`) were deleted.
+
+`warp-routing` (letting WARP clients route the LAN through this tunnel) is
+**off** — the API refuses to flip it on an existing tunnel; enable it in the
+dashboard under the tunnel's *Private network* tab if you want it.
+
+### 2c. Protect it with Cloudflare Access (optional)
+
+The tunnel mirrors `DEVBOX`, which has **no** Access application: `box.tux.bd`
+is public and relies on SSH host-key auth alone. To add SSO:
+
+Zero Trust → **Access → Applications** → add `box.tux.bd` (type
+*Self-hosted*) with an allow rule for your email/IdP. The same applies to
+`k8swalski.tux.bd` if it should not be world-readable.
 
 ### 2d. Connect over SSH
 
