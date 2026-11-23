@@ -204,13 +204,20 @@ in {
     enable            = true;
     allowedTCPPorts   = [ 22 1080 3900 3901 ];
     allowedUDPPorts   = [ 1080 ];
+    # Devcontainer ports (manifest: 8000-8007, 4433-4440). LAN only, like the rest.
+    allowedTCPPortRanges = [ { from = 8000; to = 8007; } { from = 4433; to = 4440; } ];
+    allowedUDPPortRanges = [ { from = 8000; to = 8007; } { from = 4433; to = 4440; } ];
     extraCommands = ''
       iptables -I nixos-fw 1 -p tcp -m multiport --dports 22,1080,3900,3901 ! -s 192.168.31.0/24 -i wlo1 -j nixos-fw-refuse
       iptables -I nixos-fw 1 -p udp -m multiport --dports 1080               ! -s 192.168.31.0/24 -i wlo1 -j nixos-fw-refuse
+      iptables -I nixos-fw 1 -p tcp -m multiport --dports 8000:8007,4433:4440 ! -s 192.168.31.0/24 -i wlo1 -j nixos-fw-refuse
+      iptables -I nixos-fw 1 -p udp -m multiport --dports 8000:8007,4433:4440 ! -s 192.168.31.0/24 -i wlo1 -j nixos-fw-refuse
     '';
     extraStopCommands = ''
       iptables -D nixos-fw -p tcp -m multiport --dports 22,1080,3900,3901 ! -s 192.168.31.0/24 -i wlo1 -j nixos-fw-refuse 2>/dev/null || true
       iptables -D nixos-fw -p udp -m multiport --dports 1080               ! -s 192.168.31.0/24 -i wlo1 -j nixos-fw-refuse 2>/dev/null || true
+      iptables -D nixos-fw -p tcp -m multiport --dports 8000:8007,4433:4440 ! -s 192.168.31.0/24 -i wlo1 -j nixos-fw-refuse 2>/dev/null || true
+      iptables -D nixos-fw -p udp -m multiport --dports 8000:8007,4433:4440 ! -s 192.168.31.0/24 -i wlo1 -j nixos-fw-refuse 2>/dev/null || true
     '';
   };
 
@@ -241,6 +248,10 @@ in {
     daemon.settings.iptables = false;
     autoPrune                = { enable = true; dates = "weekly"; flags = [ "--all" ]; };
   };
+
+  # Containers need outbound NAT. Docker's own iptables stay off (above), so the
+  # NixOS NAT module masquerades the docker0 bridge instead.
+  networking.nat = { enable = true; internalInterfaces = [ "docker0" ]; externalInterface = "wlo1"; };
 
   # ── Users ───────────────────────────────────────────────────────────────────
   users.mutableUsers                        = false;
