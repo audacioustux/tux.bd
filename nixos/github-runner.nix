@@ -145,6 +145,12 @@ in
         # default); TheGrid runs a reactor per shard, each pinning its pool.
         # MemoryMax above already bounds the job's memory.
         LimitMEMLOCK = "infinity";
+
+        # TheGrid's root-custody tests set the setuid bit on a file the job owns
+        # (mode 4600) to prove the host refuses it; the module's default refuses
+        # that chmod. A job here is already root-equivalent through the Docker
+        # socket, so the restriction guards nothing.
+        RestrictSUIDSGID = lib.mkForce false;
       };
     };
 
