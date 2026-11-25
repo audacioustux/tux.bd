@@ -58,10 +58,11 @@ in {
   boot.supportedFilesystems        = [ "zfs" ];
   boot.zfs.forceImportRoot         = false;
   boot.initrd.secrets              = { "/etc/zfs/safe.key" = "/etc/zfs/safe.key"; };
-  # ARC 6 GiB. panic=10: a kernel panic reboots in 10 s instead of hanging, so a one-shot
+  # ARC 3 GiB, leaving room for the devbox VMs' memory (devbox/README.md).
+  # panic=10: a kernel panic reboots in 10 s instead of hanging, so a one-shot
   # boot of a new kernel that fails falls back to the default entry by itself; boot.panic_on_fail
   # turns a stage 1 failure (a pool that will not import) into that panic instead of a prompt.
-  boot.kernelParams                = [ "zfs.zfs_arc_max=6442450944" "panic=10" "boot.panic_on_fail" ];
+  boot.kernelParams                = [ "zfs.zfs_arc_max=3221225472" "panic=10" "boot.panic_on_fail" ];
   boot.extraModprobeConfig         = "options zfs zfs_txg_timeout=30";  # batch writes
   networking.hostId                = "8424e348";
   services.zfs.autoScrub           = { enable = true; interval = "weekly"; };

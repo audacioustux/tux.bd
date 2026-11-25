@@ -13,7 +13,7 @@
     # Requires /persist/github-runner/token.
     githubRunner.enable = true;
 
-    # Development containers (NixOS containers). See devbox/README.md.
+    # Development VMs. See devbox/README.md.
     devboxes.main = {
       sshPort = 2222;
       authorizedKeys = [ # gh:audacioustux
@@ -21,10 +21,9 @@
         "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXWBoJfED5lM/FJUoGLxUqAac/NWCQymTCaGeaiWNjv"
         "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGXNKahPnaurOeUauQ+2Ze5OHOYV8THfoph0b6jkLHPc"
       ];
-      extraCapabilities = [
-        "CAP_PERFMON" # perf: hardware counters for TheGrid
-        "CAP_BPF"     # eBPF tracing for TheGrid
-      ];
+      vcpu = 6;        # of 8
+      memory = 6144;   # MiB, of 11.5 GiB; the ZFS cache is capped to leave room
+      docker = true;   # multi-node simulations
       # relay creates and deletes tens of GB of clones a day.
       unsnapshottedPaths = [ ".local/share/relay" ];
     };

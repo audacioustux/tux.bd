@@ -1,18 +1,33 @@
-# Devboxes: NixOS containers for development work, one per entry in
+# Devboxes: NixOS virtual machines for development work, one per entry in
 # `tux.devboxes`. What they are, how to add one, and how to roll back: ./README.md.
+#
+# A devbox is a VM, not a container, because it needs its own kernel: relay's
+# sandbox mounts a fresh /proc, and projects run nested containers, which
+# systemd-nspawn does not allow.
 #
 # Each devbox gets the same layout on the host:
 #
 #   rpool/safe/devbox/<name>/home        -> /srv/devbox/<name>/home         snapshotted
 #   rpool/safe/devbox/<name>/workspaces  -> /srv/devbox/<name>/workspaces   snapshotted
 #   rpool/local/devbox/<name>/<slug>     -> /srv/devbox/<name>/local/<slug> not snapshotted
+#   rpool/local/devbox/<name>/vm         -> /srv/devbox/<name>/vm           not snapshotted
 #
-# and inside the container those appear as /home/<user>, /workspaces, and
-# /home/<user>/<path> for each entry of `unsnapshottedPaths`.
+# and inside the VM those appear as /home/<user>, /workspaces, and
+# /home/<user>/<path> for each entry of `unsnapshottedPaths`, shared over
+# virtiofs. The vm dataset holds the VM's disk images: /var, which persists
+# (Docker's data, the sshd host key), and the writable Nix store layer, which
+# is recreated on every start.
 { config, lib, pkgs, ... }:
 
 let
   inherit (lib) mkOption types;
+
+  # microvm.nix, pinned. To update: pick a commit, then
+  #   nix-prefetch-url --unpack https://github.com/microvm-nix/microvm.nix/archive/<rev>.tar.gz
+  microvm = builtins.fetchTarball {
+    url = "https://github.com/microvm-nix/microvm.nix/archive/430a46d03ef15f1b8b715fafa85f21847960b783.tar.gz";
+    sha256 = "1bw4ma5ykr5hz8r0hcikw3adgnfnmcgaww147rqm0f9aayxqzfws";
+  };
 
   zfs = "${config.boot.zfs.package}/bin/zfs";
   devboxes = config.tux.devboxes;
@@ -37,18 +52,20 @@ let
       ${ensure "rpool/safe/devbox/${name}" [ "mountpoint=none" ]}
       ${ensure "rpool/safe/devbox/${name}/home" [ "mountpoint=${root name}/home" ]}
       ${ensure "rpool/safe/devbox/${name}/workspaces" [ "mountpoint=${root name}/workspaces" ]}
-      ${lib.optionalString (box.unsnapshottedPaths != [ ])
-        (ensure "rpool/local/devbox/${name}" [ "mountpoint=none" ])}
+      ${ensure "rpool/local/devbox/${name}" [ "mountpoint=none" ]}
+      ${ensure "rpool/local/devbox/${name}/vm" [ "mountpoint=${root name}/vm" ]}
       ${lib.concatMapStrings (p: ''
         ${ensure "rpool/local/devbox/${name}/${slug p}" [ "mountpoint=${root name}/local/${slug p}" ]}
-        # The mount point inside the home. nspawn would create it, and its
-        # parents, as root, leaving the user unable to write there.
+        # The mount point inside the home, owned by the user, so its parents
+        # are writable by the user too.
         d=${root name}/home
         for part in ${lib.concatStringsSep " " (lib.splitString "/" p)}; do
           d="$d/$part"; mkdir -p "$d"; chown ${toString box.uid}:users "$d"
         done
       '') box.unsnapshottedPaths}
       chown ${toString box.uid}:users ${lib.concatStringsSep " " ([ "${root name}/home" "${root name}/workspaces" ] ++ localDirs)}
+      # The hypervisor runs as microvm and creates its disk images here.
+      chown microvm:kvm ${root name}/vm
     '';
 
   devboxOptions = { name, ... }: {
@@ -56,10 +73,40 @@ let
       sshPort = mkOption {
         type = types.port;
         description = ''
-          Port this devbox's sshd listens on. Devboxes share the host's network,
-          so every devbox needs a port of its own. It is not opened in the host
-          firewall: reach it through the host (ssh, then machinectl) or through
-          the host's Cloudflare connector, which connects on localhost.
+          Host port forwarded to the devbox's sshd, on 127.0.0.1 only. Every
+          devbox needs a port of its own. Reach it from the host, or through the
+          host's Cloudflare connector, which connects on localhost.
+        '';
+      };
+
+      vcpu = mkOption {
+        type = types.ints.positive;
+        default = 4;
+        description = "Virtual CPU cores.";
+      };
+
+      memory = mkOption {
+        type = types.ints.positive;
+        default = 4096;
+        description = "Memory in MiB. Fixed while the devbox runs; the host keeps the rest.";
+      };
+
+      varSize = mkOption {
+        type = types.ints.positive;
+        default = 131072;
+        description = ''
+          Size in MiB of the VM's /var image (sparse: it takes only what is
+          written). Holds Docker's images and volumes. Growing it later means
+          resizing the image; see ./README.md.
+        '';
+      };
+
+      storeSize = mkOption {
+        type = types.ints.positive;
+        default = 65536;
+        description = ''
+          Size in MiB of the VM's writable Nix store layer (sparse). It is
+          recreated on every start; see ./README.md.
         '';
       };
 
@@ -74,7 +121,7 @@ let
         default = 1000;
         description = ''
           The account's uid. It matches the host owner's uid, so files in the
-          bind-mounted datasets need no chown in either direction.
+          shared datasets need no chown in either direction.
         '';
       };
 
@@ -84,15 +131,10 @@ let
         description = "Public keys allowed to log in as the developer account.";
       };
 
-      extraCapabilities = mkOption {
-        type = types.listOf types.str;
-        default = [ ];
-        example = [ "CAP_PERFMON" ];
-        description = ''
-          Kernel capabilities beyond systemd-nspawn's default set. Give each
-          entry a comment naming the tool that needs it, so it can be removed
-          when that tool goes.
-        '';
+      docker = mkOption {
+        type = types.bool;
+        default = false;
+        description = "A Docker daemon inside the devbox, with the developer in its group.";
       };
 
       unsnapshottedPaths = mkOption {
@@ -107,22 +149,67 @@ let
       };
     };
   };
+
+  # The VM side of one devbox: hardware, shares and ports, then ./guest.nix.
+  vmFor = name: box: {
+    autostart = true;
+    config = {
+      imports = [ ./guest.nix ];
+      tux.devbox = { inherit (box) user uid authorizedKeys docker; };
+
+      # The host's kernel, so the devbox has the same io_uring and eBPF features.
+      boot.kernelPackages = config.boot.kernelPackages;
+
+      microvm = {
+        hypervisor = "qemu";
+        inherit (box) vcpu;
+        mem = box.memory;
+
+        # User-mode networking: outbound access with no host network setup.
+        # Inbound, only sshd, and only from the host itself.
+        interfaces = [ { type = "user"; id = "usernet"; mac = "02:00:00:00:00:01"; } ];
+        forwardPorts = [ { from = "host"; host.address = "127.0.0.1"; host.port = box.sshPort; guest.port = 22; } ];
+
+        shares = [
+          { proto = "virtiofs"; tag = "ro-store"; source = "/nix/store"; mountPoint = "/nix/.ro-store"; posixAcl = false; }
+          { proto = "virtiofs"; tag = "home"; source = "${root name}/home"; mountPoint = "/home/${box.user}"; }
+          { proto = "virtiofs"; tag = "workspaces"; source = "${root name}/workspaces"; mountPoint = "/workspaces"; }
+        ] ++ map (p: {
+          proto = "virtiofs";
+          tag = slug p;
+          source = "${root name}/local/${slug p}";
+          mountPoint = "/home/${box.user}/${p}";
+        }) box.unsnapshottedPaths;
+
+        # Builds inside the VM go to a layer over the shared host store.
+        writableStoreOverlay = "/nix/.rw-store";
+        volumes = [
+          { image = "${root name}/vm/var.img"; mountPoint = "/var"; size = box.varSize; }
+          { image = "${root name}/vm/nix-store-overlay.img"; mountPoint = "/nix/.rw-store"; size = box.storeSize; }
+        ];
+      };
+    };
+  };
 in
 {
+  imports = [ "${microvm}/nixos-modules/host" ];
+
   options.tux.devboxes = mkOption {
     type = types.attrsOf (types.submodule devboxOptions);
     default = { };
-    description = "Development containers, by name. See ./README.md.";
+    description = "Development VMs, by name. See ./README.md.";
   };
 
   config = lib.mkIf (devboxes != { }) {
+    microvm.vms = lib.mapAttrs vmFor devboxes;
+
     systemd.services = lib.mkMerge [
       {
         devbox-datasets = {
           description = "Ensure ZFS datasets for the devboxes exist";
           wantedBy = [ "multi-user.target" ];
           after = [ "zfs.target" ];
-          before = map (name: "container@${name}.service") (lib.attrNames devboxes);
+          before = map (name: "microvm@${name}.service") (lib.attrNames devboxes);
           serviceConfig = { Type = "oneshot"; RemainAfterExit = true; };
           script = ''
             set -eu
@@ -133,29 +220,15 @@ in
         };
       }
 
-      # A container never starts before its datasets are mounted.
-      (lib.mapAttrs' (name: _: lib.nameValuePair "container@${name}" {
+      # A devbox never starts before its datasets are mounted. Its writable
+      # store layer starts empty each time: the Nix database inside the VM
+      # forgets what it built across a restart, so a kept layer would be stale.
+      (lib.mapAttrs' (name: _: lib.nameValuePair "microvm@${name}" {
         requires = [ "devbox-datasets.service" ];
         after = [ "devbox-datasets.service" ];
+        preStart = lib.mkBefore "rm -f ${root name}/vm/nix-store-overlay.img";
       }) devboxes)
     ];
-
-    containers = lib.mapAttrs (name: box: {
-      autoStart = true;
-      privateNetwork = false;
-      additionalCapabilities = box.extraCapabilities;
-      bindMounts = {
-        "/home/${box.user}" = { hostPath = "${root name}/home"; isReadOnly = false; };
-        "/workspaces" = { hostPath = "${root name}/workspaces"; isReadOnly = false; };
-      } // lib.listToAttrs (map (p: lib.nameValuePair "/home/${box.user}/${p}" {
-        hostPath = "${root name}/local/${slug p}";
-        isReadOnly = false;
-      }) box.unsnapshottedPaths);
-      config = {
-        imports = [ ./container.nix ];
-        tux.devbox = { inherit (box) user uid sshPort authorizedKeys; };
-      };
-    }) devboxes;
 
     services.sanoid.datasets = lib.listToAttrs (lib.concatMap (name: [
       (lib.nameValuePair "rpool/safe/devbox/${name}/home" snapshotPolicy)
