@@ -41,6 +41,12 @@ let
         (ensure "rpool/local/devbox/${name}" [ "mountpoint=none" ])}
       ${lib.concatMapStrings (p: ''
         ${ensure "rpool/local/devbox/${name}/${slug p}" [ "mountpoint=${root name}/local/${slug p}" ]}
+        # The mount point inside the home. nspawn would create it, and its
+        # parents, as root, leaving the user unable to write there.
+        d=${root name}/home
+        for part in ${lib.concatStringsSep " " (lib.splitString "/" p)}; do
+          d="$d/$part"; mkdir -p "$d"; chown ${toString box.uid}:users "$d"
+        done
       '') box.unsnapshottedPaths}
       chown ${toString box.uid}:users ${lib.concatStringsSep " " ([ "${root name}/home" "${root name}/workspaces" ] ++ localDirs)}
     '';
