@@ -39,7 +39,10 @@ particular:
 - **The Nix store layer does not.** The VM reads the host's `/nix/store`, and
   what it builds itself goes to `vm/nix-store-overlay.img`, which is deleted on
   every start, because the VM's Nix database forgets those paths across a
-  restart. A Nix shell rebuilt after a restart refetches from the cache.
+  restart. So load a project's tools with direnv (`use flake`), not `nix
+  profile install`: nix-direnv notices its cached shell is gone and rebuilds
+  it, from the binary cache, on the first `cd` after a restart. A profile
+  would be left pointing at deleted paths.
 
 Restarting or rebuilding a devbox never touches the datasets. The datasets
 service only creates what is missing.

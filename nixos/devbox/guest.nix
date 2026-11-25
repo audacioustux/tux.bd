@@ -66,11 +66,13 @@ in
     programs.direnv.enable = true;
 
     # bubblewrap: relay's job sandbox. perf: hardware counters (the VM gets
-    # the host CPU's PMU).
+    # the host CPU's PMU). mise: the tool manager projects and the developer's
+    # global tools (~/.config/mise) are declared in.
     environment.systemPackages = with pkgs; [
       bubblewrap
       curl
       git
+      mise
       perf
       rsync
     ];
