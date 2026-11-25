@@ -60,8 +60,14 @@ in
     };
 
     # Prebuilt toolchains that mise and rustup download expect a standard
-    # Linux loader; nix-ld provides it.
+    # Linux loader; nix-ld provides it. So mise may take prebuilt binaries:
+    # on NixOS it otherwise compiles every tool from source (all_compile
+    # defaults to true there), which takes an hour for Node alone.
     programs.nix-ld.enable = true;
+    environment.etc."mise/config.toml".text = ''
+      [settings]
+      all_compile = false
+    '';
     programs.zsh.enable = true;
     programs.direnv.enable = true;
 
