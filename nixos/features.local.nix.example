@@ -12,5 +12,21 @@
     # GitHub Actions runner for the nobinalo org.
     # Requires /persist/github-runner/token.
     githubRunner.enable = true;
+
+    # Development containers (NixOS containers). See devbox/README.md.
+    devboxes.main = {
+      sshPort = 2222;
+      authorizedKeys = [ # gh:audacioustux
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJLX6Wvv1eDie4pFped80zbqUFRWcZYqPQCHQEpw/yQ2"
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXWBoJfED5lM/FJUoGLxUqAac/NWCQymTCaGeaiWNjv"
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGXNKahPnaurOeUauQ+2Ze5OHOYV8THfoph0b6jkLHPc"
+      ];
+      extraCapabilities = [
+        "CAP_PERFMON" # perf: hardware counters for TheGrid
+        "CAP_BPF"     # eBPF tracing for TheGrid
+      ];
+      # relay creates and deletes tens of GB of clones a day.
+      unsnapshottedPaths = [ ".local/share/relay" ];
+    };
   };
 }

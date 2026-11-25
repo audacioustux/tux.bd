@@ -36,6 +36,7 @@ in {
     ./cloudflared.nix
     ./swarm.nix
     ./github-runner.nix
+    ./devbox
   ] ++ lib.optional (builtins.pathExists ./features.local.nix) ./features.local.nix;
 
   # ── Boot ────────────────────────────────────────────────────────────────────
