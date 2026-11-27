@@ -37,6 +37,7 @@ in {
     ./swarm.nix
     ./github-runner.nix
     ./devbox
+    ./relay.nix
   ] ++ lib.optional (builtins.pathExists ./features.local.nix) ./features.local.nix;
 
   # ── Boot ────────────────────────────────────────────────────────────────────
